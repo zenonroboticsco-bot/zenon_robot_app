@@ -1,27 +1,48 @@
-﻿workflows:
-  ios-test-build:
-    name: iOS Test Build (Unsigned)
+# ============================================================================
+# CODEMAGIC YAML - ZENON ROBOT APP
+# Best Configuration for iOS Builds
+# ============================================================================
+
+# OPTION 1: SIMPLE UNSIGNED BUILD (Quick Testing)
+# Use this to get started quickly - builds IPA but requires Sideloadly to install
+# ============================================================================
+workflows:
+  ios-unsigned:
+    name: iOS Unsigned Build
     max_build_duration: 60
     instance_type: mac_mini_m1
+    
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
+    
     scripts:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      
       - name: Install CocoaPods dependencies
         script: |
           cd ios
           pod install
-          cd ..
-      - name: Build iOS app (unsigned)
+      
+      - name: Build iOS (no code signing)
         script: |
           flutter build ios --release --no-codesign
+      
+      - name: Create unsigned IPA manually
+        script: |
+          cd build/ios/iphoneos
+          mkdir Payload
+          cp -r Runner.app Payload/
+          zip -r ../../../zenon-robot-unsigned.ipa Payload/
+          rm -rf Payload
+    
     artifacts:
-      - build/ios/iphoneos/Runner.app
+      - zenon-robot-unsigned.ipa
       - build/ios/iphoneos/*.dSYM
+    
     publishing:
       email:
         recipients:
@@ -29,3 +50,171 @@
         notify:
           success: true
           failure: true
+
+
+# ============================================================================
+# OPTION 2: SIGNED BUILD (RECOMMENDED - Fully Installable)
+# Requires Apple Developer Account - Creates proper installable IPA
+# ============================================================================
+  ios-signed:
+    name: iOS Signed Build (Ad-Hoc)
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      
+      # You must configure these in Codemagic dashboard:
+      # Settings > Code signing identities
+      ios_signing:
+        distribution_type: ad_hoc  # Can install on registered devices
+        bundle_identifier: com.zenonrobotics.zenonrobotapp
+      
+      # Environment variables (set in Codemagic dashboard)
+      vars:
+        # APP_STORE_CONNECT_ISSUER_ID: "your-issuer-id"
+        # APP_STORE_CONNECT_KEY_IDENTIFIER: "your-key-id"
+        # APP_STORE_CONNECT_PRIVATE_KEY: "your-private-key"
+        XCODE_WORKSPACE: "ios/Runner.xcworkspace"
+        XCODE_SCHEME: "Runner"
+    
+    scripts:
+      - name: Set up code signing
+        script: |
+          keychain initialize
+          
+          # Fetch signing files from App Store Connect
+          app-store-connect fetch-signing-files \
+            "com.zenonrobotics.zenonrobotapp" \
+            --type IOS_APP_ADHOC \
+            --create
+          
+          # Add certificates to keychain
+          keychain add-certificates
+          
+          # Apply profiles to Xcode project
+          xcode-project use-profiles
+      
+      - name: Increment build number
+        script: |
+          # Auto-increment build number
+          cd ios
+          agvtool new-version -all $(($(date +%s) / 60))
+          cd ..
+      
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      
+      - name: Install CocoaPods dependencies
+        script: |
+          cd ios
+          pod install
+      
+      - name: Build signed iOS IPA
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+    
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/iphoneos/*.dSYM
+    
+    publishing:
+      email:
+        recipients:
+          - zenonroboticsco@gmail.com
+        notify:
+          success: true
+          failure: true
+
+
+# ============================================================================
+# OPTION 3: APP STORE BUILD (Production)
+# For final App Store submission
+# ============================================================================
+  ios-appstore:
+    name: iOS App Store Build
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    
+    # Only build on tagged releases
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'v*'
+          include: true
+    
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.zenonrobotics.zenonrobotapp
+      
+      vars:
+        XCODE_WORKSPACE: "ios/Runner.xcworkspace"
+        XCODE_SCHEME: "Runner"
+        APP_STORE_APPLE_ID: 1234567890  # Your app's Apple ID
+    
+    scripts:
+      - name: Set up code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files \
+            "com.zenonrobotics.zenonrobotapp" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      
+      - name: Set build version
+        script: |
+          cd ios
+          # Extract version from tag (e.g., v1.0.0 -> 1.0.0)
+          VERSION=${CM_TAG#v}
+          agvtool new-marketing-version $VERSION
+          agvtool new-version -all $CM_BUILD_NUMBER
+          cd ..
+      
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      
+      - name: Install CocoaPods
+        script: |
+          cd ios
+          pod install
+      
+      - name: Build App Store IPA
+        script: |
+          flutter build ipa --release
+    
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/iphoneos/*.dSYM
+    
+    publishing:
+      email:
+        recipients:
+          - zenonroboticsco@gmail.com
+        notify:
+          success: true
+          failure: true
+      
+      # Automatically submit to TestFlight
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        
+        # Submit to TestFlight for beta testing
+        submit_to_testflight: true
+        
+        # Auto-submit to App Store (optional - uncomment if needed)
+        # submit_to_app_store: true
