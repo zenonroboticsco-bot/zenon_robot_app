@@ -1,11 +1,8 @@
 # ============================================================================
 # CODEMAGIC YAML - ZENON ROBOT APP
-# Best Configuration for iOS Builds
+# Fixed iOS Build Configuration with Deployment Target Fix
 # ============================================================================
 
-# OPTION 1: SIMPLE UNSIGNED BUILD (Quick Testing)
-# Use this to get started quickly - builds IPA but requires Sideloadly to install
-# ============================================================================
 workflows:
   ios-unsigned:
     name: iOS Unsigned Build
@@ -18,6 +15,57 @@ workflows:
       cocoapods: default
     
     scripts:
+      - name: Fix iOS deployment target
+        script: |
+          # Fix Podfile to use iOS 12.0 minimum
+          cat > ios/Podfile << 'EOF'
+          # Uncomment this line to define a global platform for your project
+          platform :ios, '12.0'
+
+          # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
+
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+            end
+
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+          end
+
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+          flutter_ios_podfile_setup
+
+          target 'Runner' do
+            use_frameworks!
+            use_modular_headers!
+
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+          end
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                # Set minimum deployment target to iOS 12.0
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '12.0'
+              end
+            end
+          end
+          EOF
+      
       - name: Get Flutter packages
         script: |
           flutter pub get
@@ -26,6 +74,7 @@ workflows:
         script: |
           cd ios
           pod install
+          cd ..
       
       - name: Build iOS (no code signing)
         script: |
@@ -38,6 +87,7 @@ workflows:
           cp -r Runner.app Payload/
           zip -r ../../../zenon-robot-unsigned.ipa Payload/
           rm -rf Payload
+          cd ../../..
     
     artifacts:
       - zenon-robot-unsigned.ipa
@@ -54,7 +104,6 @@ workflows:
 
 # ============================================================================
 # OPTION 2: SIGNED BUILD (RECOMMENDED - Fully Installable)
-# Requires Apple Developer Account - Creates proper installable IPA
 # ============================================================================
   ios-signed:
     name: iOS Signed Build (Ad-Hoc)
@@ -66,40 +115,74 @@ workflows:
       xcode: latest
       cocoapods: default
       
-      # You must configure these in Codemagic dashboard:
-      # Settings > Code signing identities
       ios_signing:
-        distribution_type: ad_hoc  # Can install on registered devices
+        distribution_type: ad_hoc
         bundle_identifier: com.zenonrobotics.zenonrobotapp
       
-      # Environment variables (set in Codemagic dashboard)
       vars:
-        # APP_STORE_CONNECT_ISSUER_ID: "your-issuer-id"
-        # APP_STORE_CONNECT_KEY_IDENTIFIER: "your-key-id"
-        # APP_STORE_CONNECT_PRIVATE_KEY: "your-private-key"
         XCODE_WORKSPACE: "ios/Runner.xcworkspace"
         XCODE_SCHEME: "Runner"
     
     scripts:
+      - name: Fix iOS deployment target
+        script: |
+          # Fix Podfile to use iOS 12.0 minimum
+          cat > ios/Podfile << 'EOF'
+          platform :ios, '12.0'
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
+
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+            end
+
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+          end
+
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+          flutter_ios_podfile_setup
+
+          target 'Runner' do
+            use_frameworks!
+            use_modular_headers!
+
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+          end
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '12.0'
+              end
+            end
+          end
+          EOF
+      
       - name: Set up code signing
         script: |
           keychain initialize
-          
-          # Fetch signing files from App Store Connect
           app-store-connect fetch-signing-files \
             "com.zenonrobotics.zenonrobotapp" \
             --type IOS_APP_ADHOC \
             --create
-          
-          # Add certificates to keychain
           keychain add-certificates
-          
-          # Apply profiles to Xcode project
           xcode-project use-profiles
       
       - name: Increment build number
         script: |
-          # Auto-increment build number
           cd ios
           agvtool new-version -all $(($(date +%s) / 60))
           cd ..
@@ -112,6 +195,7 @@ workflows:
         script: |
           cd ios
           pod install
+          cd ..
       
       - name: Build signed iOS IPA
         script: |
@@ -133,14 +217,12 @@ workflows:
 
 # ============================================================================
 # OPTION 3: APP STORE BUILD (Production)
-# For final App Store submission
 # ============================================================================
   ios-appstore:
     name: iOS App Store Build
     max_build_duration: 60
     instance_type: mac_mini_m1
     
-    # Only build on tagged releases
     triggering:
       events:
         - tag
@@ -160,9 +242,55 @@ workflows:
       vars:
         XCODE_WORKSPACE: "ios/Runner.xcworkspace"
         XCODE_SCHEME: "Runner"
-        APP_STORE_APPLE_ID: 1234567890  # Your app's Apple ID
+        APP_STORE_APPLE_ID: 1234567890
     
     scripts:
+      - name: Fix iOS deployment target
+        script: |
+          cat > ios/Podfile << 'EOF'
+          platform :ios, '12.0'
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
+
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+            end
+
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+          end
+
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+          flutter_ios_podfile_setup
+
+          target 'Runner' do
+            use_frameworks!
+            use_modular_headers!
+
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+          end
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '12.0'
+              end
+            end
+          end
+          EOF
+      
       - name: Set up code signing
         script: |
           keychain initialize
@@ -176,7 +304,6 @@ workflows:
       - name: Set build version
         script: |
           cd ios
-          # Extract version from tag (e.g., v1.0.0 -> 1.0.0)
           VERSION=${CM_TAG#v}
           agvtool new-marketing-version $VERSION
           agvtool new-version -all $CM_BUILD_NUMBER
@@ -190,6 +317,7 @@ workflows:
         script: |
           cd ios
           pod install
+          cd ..
       
       - name: Build App Store IPA
         script: |
@@ -207,14 +335,8 @@ workflows:
           success: true
           failure: true
       
-      # Automatically submit to TestFlight
       app_store_connect:
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        
-        # Submit to TestFlight for beta testing
         submit_to_testflight: true
-        
-        # Auto-submit to App Store (optional - uncomment if needed)
-        # submit_to_app_store: true
