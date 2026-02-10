@@ -1,6 +1,6 @@
 ﻿workflows:
-  ios-workflow:
-    name: iOS Workflow
+  ios-test-build:
+    name: iOS Test Build (Unsigned)
     max_build_duration: 60
     instance_type: mac_mini_m1
     environment:
@@ -9,13 +9,19 @@
       cocoapods: default
     scripts:
       - name: Get Flutter packages
-        script: flutter packages pub get
-      - name: Install pods
-        script: find . -name "Podfile" -execdir pod install \;
-      - name: Build iOS
-        script: flutter build ipa --release
+        script: |
+          flutter pub get
+      - name: Install CocoaPods dependencies
+        script: |
+          cd ios
+          pod install
+          cd ..
+      - name: Build iOS app (unsigned)
+        script: |
+          flutter build ios --release --no-codesign
     artifacts:
-      - build/ios/ipa/*.ipa
+      - build/ios/iphoneos/Runner.app
+      - build/ios/iphoneos/*.dSYM
     publishing:
       email:
         recipients:
