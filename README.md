@@ -1,6 +1,6 @@
 # Zenon Robot Control App V 1.0
 
-A professional Flutter mobile application for controlling the Zenon Robot with a beautiful Material Design 3 UI.
+A professional Flutter mobile application for controlling the Zenon Robot 
 
 ## Features
 
